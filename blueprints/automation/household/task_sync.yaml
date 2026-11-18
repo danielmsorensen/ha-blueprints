@@ -98,6 +98,9 @@ blueprint:
 # Queued so runs caused by our own list edits wait for the current run.
 mode: queued
 max: 20
+# The sync trigger runs every few minutes while a task may be open.
+trace:
+  stored_traces: 30
 
 trigger_variables:
   calendars: !input calendars
@@ -303,26 +306,31 @@ actions:
                          | map(attribute='uid') | list }}
 
       # ------------------------------ done on a phone or ticked off a list
+      # Checks live in the branch conditions: a condition step inside if/then
+      # only ends that block, not the run.
       - conditions:
-          - condition: trigger
-            id: [phone_done, list_changed]
-        sequence:
-          - if:
+          - condition: or
+            conditions:
               - condition: trigger
-                id: list_changed
-            then:
-              - condition: template
-                value_template: >-
-                  {{ trigger.from_state is not none and trigger.to_state is not none
-                     and trigger.to_state.state | int(0) < trigger.from_state.state | int(0) }}
-              # Still open on the list that changed: an unrelated item went.
-              - condition: template
-                value_template: >-
-                  {{ open_marked | selectattr('list', 'eq', trigger.entity_id) | list | count == 0 }}
-              # Open nowhere: already completed (e.g. by our own run). With a
-              # single list there's nothing else to check, so clear anyway.
-              - condition: template
-                value_template: "{{ open_marked | count > 0 or todo_entities | count == 1 }}"
+                id: phone_done
+              - condition: and
+                conditions:
+                  - condition: trigger
+                    id: list_changed
+                  # Open count dropped.
+                  - condition: template
+                    value_template: >-
+                      {{ trigger.from_state is not none and trigger.to_state is not none
+                         and trigger.to_state.state | int(0) < trigger.from_state.state | int(0) }}
+                  # Still open on the list that changed: an unrelated item went.
+                  - condition: template
+                    value_template: >-
+                      {{ open_marked | selectattr('list', 'eq', trigger.entity_id) | list | count == 0 }}
+                  # Open nowhere: already completed (e.g. by our own run). With
+                  # a single list there's nothing else to check, so clear anyway.
+                  - condition: template
+                    value_template: "{{ open_marked | count > 0 or todo_entities | count == 1 }}"
+        sequence:
           - action: "{{ notify_script }}"
             data:
               people: "{{ people }}"
