@@ -1,0 +1,156 @@
+blueprint:
+  name: Notify people at home
+  description: >-
+    Sends a notification to the phones of the given people, optionally only
+    those currently at home. Each person's phone is found from the mobile app
+    device trackers assigned to them, so no notify actions need configuring.
+    Can also clear a tagged notification from everyone's phones.
+
+
+    Call it from an automation with `people`, `message` and optional `title`,
+    `tag`, `action_id`, `action_title`, `only_home` and `clear`. Setup notes:
+    https://github.com/danielmsorensen/ha-blueprints#notify-people-at-home
+  domain: script
+  author: Daniel Sørensen
+  source_url: https://github.com/danielmsorensen/ha-blueprints/blob/main/blueprints/script/notify/people_at_home.yaml
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    persistent:
+      name: Persistent
+      description: >-
+        Android: can't be swiped away and stays after tapping (needs a tag).
+        iOS: time-sensitive, so it breaks through Focus.
+      default: true
+      selector:
+        boolean: {}
+    android_auto:
+      name: Show on Android Auto
+      description: >-
+        Adds car_ui. The Home Assistant app must be in the Android Auto
+        launcher.
+      default: false
+      selector:
+        boolean: {}
+    ios_critical:
+      name: iOS critical alert
+      description: >-
+        Ignores silent mode and Focus and plays a loud sound. Reportedly the
+        only way to show on CarPlay. Very intrusive.
+      default: false
+      selector:
+        boolean: {}
+    channel:
+      name: Android channel
+      description: Notification channel name, settable per channel on the phone.
+      default: Household tasks
+      selector:
+        text: {}
+
+fields:
+  people:
+    name: People
+    required: true
+    selector:
+      entity:
+        domain: person
+        multiple: true
+  message:
+    name: Message
+    description: Ignored when clearing.
+    selector:
+      text: {}
+  title:
+    name: Title
+    selector:
+      text: {}
+  tag:
+    name: Tag
+    description: Replaces/clears earlier notifications with the same tag.
+    selector:
+      text: {}
+  action_id:
+    name: Button action ID
+    description: Fires mobile_app_notification_action with this action.
+    selector:
+      text: {}
+  action_title:
+    name: Button label
+    selector:
+      text: {}
+  only_home:
+    name: Only people at home
+    default: true
+    selector:
+      boolean: {}
+  clear:
+    name: Clear instead of send
+    description: Removes the notification with this tag from every phone.
+    default: false
+    selector:
+      boolean: {}
+
+mode: parallel
+max: 20
+
+sequence:
+  - variables:
+      persistent: !input persistent
+      android_auto: !input android_auto
+      ios_critical: !input ios_critical
+      channel: !input channel
+      people_list: "{{ [people] if people is string else (people | default([]) | list) }}"
+      home_only: "{{ (only_home | default(true)) | bool }}"
+      clearing: "{{ (clear | default(false)) | bool }}"
+      tag_value: "{{ tag | default('') }}"
+      # Each person's phones: their mobile_app device trackers. A mobile app's
+      # notify action is named after the device's registered name.
+      targets: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for p in people_list -%}
+          {%- if clearing or not home_only or is_state(p, 'home') -%}
+            {%- for t in state_attr(p, 'device_trackers') or [] -%}
+              {%- set d = device_id(t) -%}
+              {%- if d and 'mobile_app' in (device_attr(d, 'identifiers') | map('first') | list) -%}
+                {%- set ns.out = ns.out + ['notify.mobile_app_' ~ (device_attr(d, 'name') | slugify)] -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{ ns.out | unique | list }}
+      notification_data: >-
+        {%- set d = {'importance': 'high', 'priority': 'high', 'ttl': 0, 'channel': channel} -%}
+        {%- if tag_value -%}
+          {%- set d = dict(d, tag=tag_value) -%}
+          {%- if persistent -%}{%- set d = dict(d, persistent=true, sticky=true) -%}{%- endif -%}
+        {%- endif -%}
+        {%- if android_auto -%}{%- set d = dict(d, car_ui=true) -%}{%- endif -%}
+        {%- if action_id | default('') -%}
+          {%- set d = dict(d, actions=[{'action': action_id, 'title': action_title | default('Done')}]) -%}
+        {%- endif -%}
+        {%- set level = 'critical' if ios_critical else ('time-sensitive' if persistent else 'active') -%}
+        {%- set push = {'interruption-level': level} -%}
+        {%- if ios_critical -%}
+          {%- set push = dict(push, sound={'name': 'default', 'critical': 1, 'volume': 1.0}) -%}
+        {%- endif -%}
+        {{ dict(d, push=push) }}
+  - repeat:
+      for_each: "{{ targets }}"
+      sequence:
+        - if:
+            - condition: template
+              value_template: "{{ clearing }}"
+          then:
+            - action: "{{ repeat.item }}"
+              continue_on_error: true
+              data:
+                message: clear_notification
+                data:
+                  tag: "{{ tag_value }}"
+          else:
+            - action: "{{ repeat.item }}"
+              continue_on_error: true
+              data:
+                title: "{{ title | default('') }}"
+                message: "{{ message | default('') }}"
+                data: "{{ notification_data }}"

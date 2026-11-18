@@ -1,83 +1,123 @@
 blueprint:
-  name: Household task sync
+  name: Calendar chore task sync
   description: >-
-    Creates a task on one or more to-do lists (for example a local Home
-    Assistant list plus Google Tasks, which can show on a Nest Display) and
-    sends an actionable notification. Tapping **Done** on any phone, or ticking
-    the task off on any of the lists, completes it everywhere and clears the
-    notification on every phone.
+    The day before a calendar event (for example bin collection), adds one task
+    naming all of tomorrow's events to one or more to-do lists (for example a
+    local list plus Google Tasks, which can show on a Nest Display) and
+    notifies the people at home. Anyone arriving home re-notifies everyone at
+    home. Tapping the button on any phone, or ticking the task off on any list,
+    completes it everywhere and clears every phone. Unfinished tasks expire on
+    the event day.
 
 
-    The to-do lists must support descriptions and due dates (Local To-do and
-    Google Tasks both do). Setup notes:
-    https://github.com/danielmsorensen/ha-blueprints#household-task-sync
+    Needs the "Notify people at home" script blueprint. Setup notes:
+    https://github.com/danielmsorensen/ha-blueprints#calendar-chore-task-sync
   domain: automation
   author: Daniel Sørensen
   source_url: https://github.com/danielmsorensen/ha-blueprints/blob/main/blueprints/automation/household/task_sync.yaml
   homeassistant:
     min_version: 2024.10.0
   input:
-    task_trigger:
-      name: Create trigger
-      description: When to create the task (calendar event, time, sensor...).
+    calendars:
+      name: Calendars
+      description: Calendars whose events tomorrow create the task.
       selector:
-        trigger: {}
-    task_name:
-      name: Task name
-      description: >-
-        Task title and notification text. Templates are rendered when the task
-        is created, e.g. "Put out {{ trigger.calendar_event.summary }}".
+        entity:
+          domain: calendar
+          multiple: true
+    start_time:
+      name: Start time (day before)
+      description: When to check tomorrow's events, create the task and notify.
+      default: "15:00:00"
       selector:
-        text: {}
+        time: {}
+    expire_time:
+      name: Expire time (event day)
+      description: When an unfinished task is removed and phones cleared.
+      default: "09:00:00"
+      selector:
+        time: {}
     task_key:
       name: Task key
       description: >-
-        Short unique ID for this chore, e.g. "bins". Used to find the task again
-        later, as the notification tag and as the Done button's action ID.
-        Must be unique across all instances of this blueprint.
+        Short unique ID, e.g. "bins". Marks the task on the lists and is the
+        notification tag and button action. Must be unique per automation.
+      selector:
+        text: {}
+    task_name:
+      name: Task name
+      description: >-
+        Task title and notification message. `{{ events }}` is tomorrow's
+        event names, e.g. "Recycling and Garden".
+      default: "{{ events }}"
       selector:
         text: {}
     todo_entities:
       name: To-do lists
-      description: Lists to add the task to (e.g. a local list and Google Tasks).
+      description: Lists to add the task to. Need description + due date support.
       selector:
         entity:
           domain: todo
           multiple: true
-    notify_service:
-      name: Notify service
-      description: >-
-        Full action name, e.g. notify.household_phones (a notify group) or
-        notify.mobile_app_pixel_8.
+    people:
+      name: People
+      description: Who is notified (when home) and whose arrival re-notifies.
       selector:
-        text: {}
+        entity:
+          domain: person
+          multiple: true
+    notify_script:
+      name: Notify script
+      description: A script made from the "Notify people at home" blueprint.
+      selector:
+        entity:
+          domain: script
     notification_title:
       name: Notification title
       default: Household task
       selector:
         text: {}
     done_label:
-      name: Done button label
-      default: Done
+      name: Button label
+      default: Mark completed
       selector:
         text: {}
-    due_in_days:
-      name: Due in (days)
-      description: 0 = due today, 1 = due tomorrow.
-      default: 0
+    sync_interval:
+      name: Refresh lists every (minutes)
+      description: >-
+        While a task may be open, refresh the lists this often so ticking it
+        off in Google Tasks clears phones quickly (Google is otherwise polled
+        every 30 minutes). 0 = off.
+      default: 2
       selector:
         number:
           min: 0
           max: 30
           mode: box
 
-# Queued so completion checks triggered by our own list edits run after the
-# current run finishes, rather than cancelling it.
+# Queued so runs caused by our own list edits wait for the current run.
 mode: queued
-max: 10
+max: 20
+# The sync trigger runs every few minutes while a task may be open.
+trace:
+  stored_traces: 30
+
+trigger_variables:
+  calendars: !input calendars
+  start_time: !input start_time
+  expire_time: !input expire_time
+  sync_interval: !input sync_interval
 
 triggers:
-  - triggers: !input task_trigger
+  - trigger: time
+    at: !input start_time
+    id: create
+  - trigger: homeassistant
+    event: start
+    id: create_startup
+  - trigger: time
+    at: !input expire_time
+    id: expire
   - trigger: event
     event_type: mobile_app_notification_action
     event_data:
@@ -89,136 +129,219 @@ triggers:
     not_from: [unavailable, unknown]
     not_to: [unavailable, unknown]
     id: list_changed
+  - trigger: state
+    entity_id: !input people
+    to: home
+    id: arrived
+  # Only fires between start time the day before and expire time on the day.
+  - trigger: template
+    value_template: >-
+      {%- set n = sync_interval | int(0) -%}
+      {%- set tmr = (now() + timedelta(days=1)).date() | string -%}
+      {%- set cals = [calendars] if calendars is string else calendars -%}
+      {%- set eve = now() >= today_at(start_time)
+          and cals | map('state_attr', 'start_time') | select('string')
+                   | select('match', tmr) | list | count > 0 -%}
+      {%- set day = now() < today_at(expire_time)
+          and cals | select('is_state', 'on') | list | count > 0 -%}
+      {{ n > 0 and now().minute % n == 0 and (eve or day) }}
+    id: sync
 
 variables:
   task_key: !input task_key
   todo_entities: !input todo_entities
-  notify_service: !input notify_service
-  due_in_days: !input due_in_days
-  # Stored in each item's description so we can find it again by marker
-  # rather than by title (the title is templated and can't be re-rendered).
+  people: !input people
+  notify_script: !input notify_script
+  notification_title: !input notification_title
+  done_label: !input done_label
+  # Stored in each task's description so we find it again by marker, not title.
   marker: "[ha:{{ task_key }}]"
+  today: "{{ now().date() | string }}"
+  tomorrow: "{{ (now() + timedelta(days=1)).date() | string }}"
 
 actions:
-  # ---------------------------------------------------------------- create
-  - if:
-      - condition: template
-        value_template: "{{ trigger.id not in ['phone_done', 'list_changed'] }}"
-    then:
-      - variables:
-          item_name: !input task_name
-          due_date: "{{ (now() + timedelta(days=due_in_days | int(0))).date() | string }}"
-      - repeat:
-          for_each: "{{ todo_entities }}"
-          sequence:
-            - variables:
-                list_id: "{{ repeat.item }}"
-            - action: todo.get_items
-              target:
-                entity_id: "{{ list_id }}"
-              data:
-                status: needs_action
-              response_variable: existing
-            - variables:
-                stale_uids: >-
-                  {%- set ns = namespace(uids=[]) -%}
-                  {%- for i in existing[list_id]['items'] -%}
-                    {%- if marker in (i.get('description') or '') -%}
-                      {%- set ns.uids = ns.uids + [i['uid']] -%}
-                    {%- endif -%}
+  # Open tasks carrying our marker, on every list.
+  - action: todo.get_items
+    target:
+      entity_id: "{{ todo_entities }}"
+    data:
+      status: needs_action
+    response_variable: open_lists
+  - variables:
+      open_marked: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for ent, r in open_lists.items() -%}
+          {%- for i in r['items'] if marker in (i.get('description') or '') -%}
+            {%- set ns.out = ns.out + [{'list': ent, 'uid': i['uid'],
+                'summary': i['summary'], 'due': i.get('due') | string}] -%}
+          {%- endfor -%}
+        {%- endfor -%}
+        {{ ns.out }}
+
+  - choose:
+      # ------------------------------------------------------------ create
+      - conditions:
+          - condition: trigger
+            id: [create, create_startup]
+        sequence:
+          # After a restart, only catch up if start time has already passed.
+          - condition: template
+            value_template: >-
+              {{ trigger.id == 'create' or now() >= today_at(start_time) }}
+          # Already created today (e.g. restart after start time).
+          - condition: template
+            value_template: "{{ open_marked | selectattr('due', 'eq', today) | list | count == 0 }}"
+          - action: calendar.get_events
+            target:
+              entity_id: !input calendars
+            data:
+              start_date_time: "{{ tomorrow }} 00:00:00"
+              end_date_time: "{{ tomorrow }} 23:59:59"
+            response_variable: cal
+          - variables:
+              events: >-
+                {%- set ns = namespace(s=[]) -%}
+                {%- for ent, r in cal.items() -%}
+                  {%- for e in r['events'] if (e['start'] | string)[:10] == tomorrow
+                                              and e['summary'] not in ns.s -%}
+                    {%- set ns.s = ns.s + [e['summary']] -%}
                   {%- endfor -%}
-                  {{ ns.uids }}
-            # Replace any copy left over from last time rather than duplicating it.
-            - if:
-                - condition: template
-                  value_template: "{{ stale_uids | count > 0 }}"
-              then:
+                {%- endfor -%}
+                {%- if ns.s | count > 1 -%}
+                  {{ ns.s[:-1] | join(', ') }} and {{ ns.s[-1] }}
+                {%- else -%}
+                  {{ ns.s | join('') }}
+                {%- endif -%}
+          - condition: template
+            value_template: "{{ events | length > 0 }}"
+          - variables:
+              item_name: !input task_name
+          # Replace any copy left over from last time rather than duplicating it.
+          - repeat:
+              for_each: "{{ todo_entities }}"
+              sequence:
+                - variables:
+                    stale: >-
+                      {{ open_marked | selectattr('list', 'eq', repeat.item)
+                         | map(attribute='uid') | list }}
+                - if:
+                    - condition: template
+                      value_template: "{{ stale | count > 0 }}"
+                  then:
+                    - action: todo.remove_item
+                      target:
+                        entity_id: "{{ repeat.item }}"
+                      data:
+                        item: "{{ stale }}"
+          - action: todo.add_item
+            target:
+              entity_id: "{{ todo_entities }}"
+            data:
+              item: "{{ item_name }}"
+              description: "{{ marker }}"
+              due_date: "{{ today }}"
+          - action: "{{ notify_script }}"
+            data:
+              people: "{{ people }}"
+              only_home: true
+              title: "{{ notification_title }}"
+              message: "{{ item_name }}"
+              tag: "{{ task_key }}"
+              action_id: "{{ task_key }}"
+              action_title: "{{ done_label }}"
+
+      # ------------------------------------------- someone arrived home
+      - conditions:
+          - condition: trigger
+            id: arrived
+          - condition: template
+            value_template: "{{ open_marked | count > 0 }}"
+        sequence:
+          - action: "{{ notify_script }}"
+            data:
+              people: "{{ people }}"
+              only_home: true
+              title: "{{ notification_title }}"
+              message: "{{ open_marked[0].summary }}"
+              tag: "{{ task_key }}"
+              action_id: "{{ task_key }}"
+              action_title: "{{ done_label }}"
+
+      # ------------------------------------------- refresh polled lists
+      - conditions:
+          - condition: trigger
+            id: sync
+          - condition: template
+            value_template: "{{ open_marked | count > 0 }}"
+        sequence:
+          - action: homeassistant.update_entity
+            target:
+              entity_id: "{{ todo_entities }}"
+
+      # ------------------------------------------------------------ expire
+      - conditions:
+          - condition: trigger
+            id: expire
+        sequence:
+          - variables:
+              expired: >-
+                {{ open_marked | rejectattr('due', 'in', ['None', ''])
+                   | selectattr('due', 'lt', today) | list }}
+          - condition: template
+            value_template: "{{ expired | count > 0 }}"
+          - action: "{{ notify_script }}"
+            data:
+              people: "{{ people }}"
+              clear: true
+              tag: "{{ task_key }}"
+          - repeat:
+              for_each: "{{ expired | map(attribute='list') | unique | list }}"
+              sequence:
                 - action: todo.remove_item
                   target:
-                    entity_id: "{{ list_id }}"
+                    entity_id: "{{ repeat.item }}"
                   data:
-                    item: "{{ stale_uids }}"
-            - action: todo.add_item
-              target:
-                entity_id: "{{ list_id }}"
-              data:
-                item: "{{ item_name }}"
-                description: "{{ marker }}"
-                due_date: "{{ due_date }}"
-      - action: "{{ notify_service }}"
-        data:
-          title: !input notification_title
-          message: "{{ item_name }}"
-          data:
-            tag: "{{ task_key }}"
-            actions:
-              - action: "{{ task_key }}"
-                title: !input done_label
-      - stop: Task created
+                    item: >-
+                      {{ expired | selectattr('list', 'eq', repeat.item)
+                         | map(attribute='uid') | list }}
 
-  # ------------------------------------------- was it ticked off on a list?
-  - if:
-      - condition: trigger
-        id: list_changed
-    then:
-      - if:
-          - condition: template
-            value_template: >-
-              {{ trigger.from_state is none or trigger.to_state is none
-                 or trigger.to_state.state | int(0) >= trigger.from_state.state | int(0) }}
-        then:
-          - stop: Open item count did not drop
-      - action: todo.get_items
-        target:
-          entity_id: "{{ trigger.entity_id }}"
-        data:
-          status: needs_action
-        response_variable: changed
-      - if:
-          - condition: template
-            value_template: >-
-              {%- set ns = namespace(found=false) -%}
-              {%- for i in changed[trigger.entity_id]['items'] -%}
-                {%- if marker in (i.get('description') or '') -%}
-                  {%- set ns.found = true -%}
-                {%- endif -%}
-              {%- endfor -%}
-              {{ ns.found }}
-        then:
-          - stop: Task still open on the list that changed
-
-  # -------------------------------------------- complete everywhere + clear
-  - action: "{{ notify_service }}"
-    data:
-      message: clear_notification
-      data:
-        tag: "{{ task_key }}"
-  - repeat:
-      for_each: "{{ todo_entities }}"
-      sequence:
-        - variables:
-            list_id: "{{ repeat.item }}"
-        - action: todo.get_items
-          target:
-            entity_id: "{{ list_id }}"
-          data:
-            status: needs_action
-          response_variable: open_items
-        - variables:
-            open_uids: >-
-              {%- set ns = namespace(uids=[]) -%}
-              {%- for i in open_items[list_id]['items'] -%}
-                {%- if marker in (i.get('description') or '') -%}
-                  {%- set ns.uids = ns.uids + [i['uid']] -%}
-                {%- endif -%}
-              {%- endfor -%}
-              {{ ns.uids }}
-        - repeat:
-            for_each: "{{ open_uids }}"
-            sequence:
-              - action: todo.update_item
-                target:
-                  entity_id: "{{ list_id }}"
-                data:
-                  item: "{{ repeat.item }}"
-                  status: completed
+      # ------------------------------ done on a phone or ticked off a list
+      # Checks live in the branch conditions: a condition step inside if/then
+      # only ends that block, not the run.
+      - conditions:
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: phone_done
+              - condition: and
+                conditions:
+                  - condition: trigger
+                    id: list_changed
+                  # Open count dropped.
+                  - condition: template
+                    value_template: >-
+                      {{ trigger.from_state is not none and trigger.to_state is not none
+                         and trigger.to_state.state | int(0) < trigger.from_state.state | int(0) }}
+                  # Still open on the list that changed: an unrelated item went.
+                  - condition: template
+                    value_template: >-
+                      {{ open_marked | selectattr('list', 'eq', trigger.entity_id) | list | count == 0 }}
+                  # Open nowhere: already completed (e.g. by our own run). With
+                  # a single list there's nothing else to check, so clear anyway.
+                  - condition: template
+                    value_template: "{{ open_marked | count > 0 or todo_entities | count == 1 }}"
+        sequence:
+          - action: "{{ notify_script }}"
+            data:
+              people: "{{ people }}"
+              clear: true
+              tag: "{{ task_key }}"
+          - repeat:
+              for_each: "{{ open_marked }}"
+              sequence:
+                - action: todo.update_item
+                  target:
+                    entity_id: "{{ repeat.item.list }}"
+                  data:
+                    item: "{{ repeat.item.uid }}"
+                    status: completed

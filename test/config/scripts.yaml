@@ -1,0 +1,16 @@
+# Script blueprint instances. CI runs HA's check_config on these.
+
+notify_people_at_home:
+  alias: "CI people_at_home: all inputs"
+  use_blueprint:
+    path: notify/people_at_home.yaml
+    input:
+      persistent: true
+      android_auto: true
+      ios_critical: false
+      channel: Household tasks
+
+notify_people_at_home_defaults:
+  alias: "CI people_at_home: defaults only"
+  use_blueprint:
+    path: notify/people_at_home.yaml

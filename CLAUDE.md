@@ -17,13 +17,17 @@ reach his house, so keep `main` working.
 
 ## Conventions
 
-- Path: `blueprints/automation/<category>/<name>.yaml`.
+- Path: `blueprints/<domain>/<category>/<name>.yaml` (domain `automation` or
+  `script`).
 - Every blueprint sets `author`, `source_url` (the GitHub `blob/main` URL of
   that file) and `homeassistant.min_version`.
 - Use current syntax: `triggers:`/`trigger:`, `actions:`/`action:`,
-  `conditions:`/`condition:`. Inject a trigger-selector input with
-  `- triggers: !input x`. It can't carry an `id`, so tell it apart from the
-  blueprint's own triggers by checking that `trigger.id` isn't one of theirs.
+  `conditions:`/`condition:`. Inputs used in trigger templates go in
+  `trigger_variables`.
+- Phone notifications go through the `people_at_home` script blueprint. It
+  finds each person's phone from their mobile_app device trackers
+  (`notify.mobile_app_<slug of device registry name>`); don't add notify
+  action inputs.
 - Only render templates that depend on `trigger.*` in the branch for that
   trigger. Accessing `trigger.calendar_event.summary` under another trigger
   raises an error.
@@ -38,17 +42,18 @@ reach his house, so keep `main` working.
 
 ## Adding a blueprint
 
-1. Add the YAML under `blueprints/automation/<category>/`.
-2. Add at least one `use_blueprint` instance to `test/config/automations.yaml`,
-   setting every input, plus one using only the defaults.
+1. Add the YAML under `blueprints/<domain>/<category>/`.
+2. Add at least one `use_blueprint` instance to `test/config/automations.yaml`
+   (or `scripts.yaml`), setting every input, plus one using only the
+   defaults.
 3. Add a row and a section to `README.md`, including a My Home Assistant import
    badge (URL-encode the `blob/main` URL).
 4. Open a PR.
 
 ## Open items
 
-- Check that a Google Task created through the API (date only, no time) shows
-  on the Nest Display. If it doesn't, consider an optional TTS announcement
-  input (`tts.speak` to a `media_player`).
-- task_sync: a list's open count dropping for an unrelated item makes it send
-  a harmless extra `clear_notification`. Could be tightened if it becomes noisy.
+- Confirm on the first live run: date-only Google Task shows on the Nest
+  Display; iOS `clear_notification` by tag works; Android Auto `car_ui` shows.
+- CarPlay only shows critical alerts (community reports, unverified).
+- task_sync with a single list: an unrelated item ticked off while no task is
+  open sends a harmless extra `clear_notification`.
