@@ -31,8 +31,16 @@ jobs:
           mkdir -p ci-config/blueprints
           cp -r test/config/. ci-config/
           cp -r blueprints/. ci-config/blueprints/
+      # check_config exits 0 when a blueprint instance fails to build and only
+      # logs an ERROR line, so fail on any ERROR or failed-config output.
       - name: Run Home Assistant check_config
         run: |
+          set -o pipefail
           docker run --rm -v "$PWD/ci-config:/config" \
             ghcr.io/home-assistant/home-assistant:${{ matrix.version }} \
-            python3 -m homeassistant --script check_config --config /config
+            python3 -m homeassistant --script check_config --config /config \
+            2>&1 | tee check_config.log
+          if grep -E "ERROR|Failed config|Invalid config" check_config.log; then
+            echo "::error::check_config reported errors (see above)"
+            exit 1
+          fi

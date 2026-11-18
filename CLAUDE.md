@@ -10,7 +10,8 @@ reach his house, so keep `main` working.
 - Work on a branch and open a PR. Don't push to `main`.
 - CI (`.github/workflows/validate.yaml`) must pass: `yamllint --strict` and
   HA's `check_config` against `test/config/` on stable (and beta, which is
-  allowed to fail).
+  allowed to fail). `check_config` exits 0 on a broken blueprint instance and
+  only logs `ERROR`, so the workflow greps its output. Keep that grep.
 - In the PR description, write what changed and how Dan should test it on his
   real setup. CI only checks the schema, not behaviour.
 
@@ -46,8 +47,6 @@ reach his house, so keep `main` working.
 
 ## Open items
 
-- Check that `check_config` really fails on an invalid blueprint instance:
-  break one input on a branch and confirm CI goes red.
 - Check that a Google Task created through the API (date only, no time) shows
   on the Nest Display. If it doesn't, consider an optional TTS announcement
   input (`tts.speak` to a `media_player`).
