@@ -2,36 +2,40 @@
 # substitutes these inputs and validates the resulting automations.
 # Entity IDs don't need to exist.
 
-- id: ci_task_sync_calendar
-  alias: "CI task_sync: calendar trigger, all inputs"
+- id: ci_task_sync_bins
+  alias: "CI task_sync: bins, all inputs"
   use_blueprint:
     path: household/task_sync.yaml
     input:
-      task_trigger:
-        - trigger: calendar
-          event: start
-          offset: "-5:0:0"
-          entity_id: calendar.waste_collection_schedule
-      task_name: "Put out {{ trigger.calendar_event.summary }}"
+      calendars:
+        - calendar.general_waste
+        - calendar.recycling
+        - calendar.garden
+      start_time: "15:00:00"
+      expire_time: "09:00:00"
       task_key: bins
+      task_name: "{{ events }}"
       todo_entities:
-        - todo.house_chores
+        - todo.household_tasks
         - todo.google_tasks
-      notify_service: notify.household_phones
-      notification_title: Bin night
-      done_label: Bins out
-      due_in_days: 1
+      people:
+        - person.one
+        - person.two
+      notify_script: script.notify_people_at_home
+      notification_title: Bin Night
+      done_label: Mark completed
+      sync_interval: 2
 
 - id: ci_task_sync_minimal
-  alias: "CI task_sync: time trigger, defaults only"
+  alias: "CI task_sync: defaults only"
   use_blueprint:
     path: household/task_sync.yaml
     input:
-      task_trigger:
-        - trigger: time
-          at: "09:00:00"
-      task_name: Water the plants
+      calendars:
+        - calendar.plants
       task_key: plants
       todo_entities:
-        - todo.house_chores
-      notify_service: notify.mobile_app_phone
+        - todo.household_tasks
+      people:
+        - person.one
+      notify_script: script.notify_people_at_home_defaults

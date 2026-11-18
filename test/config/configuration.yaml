@@ -4,3 +4,4 @@ homeassistant:
   time_zone: Europe/London
 
 automation: !include automations.yaml
+script: !include scripts.yaml
