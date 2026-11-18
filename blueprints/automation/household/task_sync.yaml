@@ -1,0 +1,224 @@
+blueprint:
+  name: Household task sync
+  description: >-
+    Creates a task on one or more to-do lists (for example a local Home
+    Assistant list plus Google Tasks, which can show on a Nest Display) and
+    sends an actionable notification. Tapping **Done** on any phone, or ticking
+    the task off on any of the lists, completes it everywhere and clears the
+    notification on every phone.
+
+
+    The to-do lists must support descriptions and due dates (Local To-do and
+    Google Tasks both do). Setup notes:
+    https://github.com/danielmsorensen/ha-blueprints#household-task-sync
+  domain: automation
+  author: Daniel Sørensen
+  source_url: https://github.com/danielmsorensen/ha-blueprints/blob/main/blueprints/automation/household/task_sync.yaml
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    task_trigger:
+      name: Create trigger
+      description: When to create the task (calendar event, time, sensor...).
+      selector:
+        trigger: {}
+    task_name:
+      name: Task name
+      description: >-
+        Task title and notification text. Templates are rendered when the task
+        is created, e.g. "Put out {{ trigger.calendar_event.summary }}".
+      selector:
+        text: {}
+    task_key:
+      name: Task key
+      description: >-
+        Short unique ID for this chore, e.g. "bins". Used to find the task again
+        later, as the notification tag and as the Done button's action ID.
+        Must be unique across all instances of this blueprint.
+      selector:
+        text: {}
+    todo_entities:
+      name: To-do lists
+      description: Lists to add the task to (e.g. a local list and Google Tasks).
+      selector:
+        entity:
+          domain: todo
+          multiple: true
+    notify_service:
+      name: Notify service
+      description: >-
+        Full action name, e.g. notify.household_phones (a notify group) or
+        notify.mobile_app_pixel_8.
+      selector:
+        text: {}
+    notification_title:
+      name: Notification title
+      default: Household task
+      selector:
+        text: {}
+    done_label:
+      name: Done button label
+      default: Done
+      selector:
+        text: {}
+    due_in_days:
+      name: Due in (days)
+      description: 0 = due today, 1 = due tomorrow.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 30
+          mode: box
+
+# Queued so completion checks triggered by our own list edits run after the
+# current run finishes, rather than cancelling it.
+mode: queued
+max: 10
+
+triggers:
+  - triggers: !input task_trigger
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: !input task_key
+    id: phone_done
+  # A todo entity's state is its count of open items.
+  - trigger: state
+    entity_id: !input todo_entities
+    not_from: [unavailable, unknown]
+    not_to: [unavailable, unknown]
+    id: list_changed
+
+variables:
+  task_key: !input task_key
+  todo_entities: !input todo_entities
+  notify_service: !input notify_service
+  due_in_days: !input due_in_days
+  # Stored in each item's description so we can find it again by marker
+  # rather than by title (the title is templated and can't be re-rendered).
+  marker: "[ha:{{ task_key }}]"
+
+actions:
+  # ---------------------------------------------------------------- create
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id not in ['phone_done', 'list_changed'] }}"
+    then:
+      - variables:
+          item_name: !input task_name
+          due_date: "{{ (now() + timedelta(days=due_in_days | int(0))).date() | string }}"
+      - repeat:
+          for_each: "{{ todo_entities }}"
+          sequence:
+            - variables:
+                list_id: "{{ repeat.item }}"
+            - action: todo.get_items
+              target:
+                entity_id: "{{ list_id }}"
+              data:
+                status: needs_action
+              response_variable: existing
+            - variables:
+                stale_uids: >-
+                  {%- set ns = namespace(uids=[]) -%}
+                  {%- for i in existing[list_id]['items'] -%}
+                    {%- if marker in (i.get('description') or '') -%}
+                      {%- set ns.uids = ns.uids + [i['uid']] -%}
+                    {%- endif -%}
+                  {%- endfor -%}
+                  {{ ns.uids }}
+            # Replace any copy left over from last time rather than duplicating it.
+            - if:
+                - condition: template
+                  value_template: "{{ stale_uids | count > 0 }}"
+              then:
+                - action: todo.remove_item
+                  target:
+                    entity_id: "{{ list_id }}"
+                  data:
+                    item: "{{ stale_uids }}"
+            - action: todo.add_item
+              target:
+                entity_id: "{{ list_id }}"
+              data:
+                item: "{{ item_name }}"
+                description: "{{ marker }}"
+                due_date: "{{ due_date }}"
+      - action: "{{ notify_service }}"
+        data:
+          title: !input notification_title
+          message: "{{ item_name }}"
+          data:
+            tag: "{{ task_key }}"
+            actions:
+              - action: "{{ task_key }}"
+                title: !input done_label
+      - stop: Task created
+
+  # ------------------------------------------- was it ticked off on a list?
+  - if:
+      - condition: trigger
+        id: list_changed
+    then:
+      - if:
+          - condition: template
+            value_template: >-
+              {{ trigger.from_state is none or trigger.to_state is none
+                 or trigger.to_state.state | int(0) >= trigger.from_state.state | int(0) }}
+        then:
+          - stop: Open item count did not drop
+      - action: todo.get_items
+        target:
+          entity_id: "{{ trigger.entity_id }}"
+        data:
+          status: needs_action
+        response_variable: changed
+      - if:
+          - condition: template
+            value_template: >-
+              {%- set ns = namespace(found=false) -%}
+              {%- for i in changed[trigger.entity_id]['items'] -%}
+                {%- if marker in (i.get('description') or '') -%}
+                  {%- set ns.found = true -%}
+                {%- endif -%}
+              {%- endfor -%}
+              {{ ns.found }}
+        then:
+          - stop: Task still open on the list that changed
+
+  # -------------------------------------------- complete everywhere + clear
+  - action: "{{ notify_service }}"
+    data:
+      message: clear_notification
+      data:
+        tag: "{{ task_key }}"
+  - repeat:
+      for_each: "{{ todo_entities }}"
+      sequence:
+        - variables:
+            list_id: "{{ repeat.item }}"
+        - action: todo.get_items
+          target:
+            entity_id: "{{ list_id }}"
+          data:
+            status: needs_action
+          response_variable: open_items
+        - variables:
+            open_uids: >-
+              {%- set ns = namespace(uids=[]) -%}
+              {%- for i in open_items[list_id]['items'] -%}
+                {%- if marker in (i.get('description') or '') -%}
+                  {%- set ns.uids = ns.uids + [i['uid']] -%}
+                {%- endif -%}
+              {%- endfor -%}
+              {{ ns.uids }}
+        - repeat:
+            for_each: "{{ open_uids }}"
+            sequence:
+              - action: todo.update_item
+                target:
+                  entity_id: "{{ list_id }}"
+                data:
+                  item: "{{ repeat.item }}"
+                  status: completed

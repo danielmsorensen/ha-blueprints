@@ -1,0 +1,37 @@
+# One or more instances per blueprint. CI runs HA's check_config, which
+# substitutes these inputs and validates the resulting automations.
+# Entity IDs don't need to exist.
+
+- id: ci_task_sync_calendar
+  alias: "CI task_sync: calendar trigger, all inputs"
+  use_blueprint:
+    path: household/task_sync.yaml
+    input:
+      task_trigger:
+        - trigger: calendar
+          event: start
+          offset: "-5:0:0"
+          entity_id: calendar.waste_collection_schedule
+      task_name: "Put out {{ trigger.calendar_event.summary }}"
+      task_key: bins
+      todo_entities:
+        - todo.house_chores
+        - todo.google_tasks
+      notify_service: notify.household_phones
+      notification_title: Bin night
+      done_label: Bins out
+      due_in_days: 1
+
+- id: ci_task_sync_minimal
+  alias: "CI task_sync: time trigger, defaults only"
+  use_blueprint:
+    path: household/task_sync.yaml
+    input:
+      task_trigger:
+        - trigger: time
+          at: "09:00:00"
+      task_name: Water the plants
+      task_key: plants
+      todo_entities:
+        - todo.house_chores
+      notify_service: notify.mobile_app_phone

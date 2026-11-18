@@ -1,0 +1,10 @@
+# Add to configuration.yaml (or notify.yaml via `notify: !include notify.yaml`),
+# then restart Home Assistant. Gives you notify.household_phones.
+# Find your phones' names under Developer tools > Actions, search "mobile_app".
+# Older HA versions use `service:` instead of `action:` in the list below.
+notify:
+  - platform: group
+    name: household_phones
+    services:
+      - action: mobile_app_phone_one
+      - action: mobile_app_phone_two

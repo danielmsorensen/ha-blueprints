@@ -1,0 +1,6 @@
+# Minimal config used only by CI to validate blueprint instances.
+homeassistant:
+  name: Blueprint CI
+  time_zone: Europe/London
+
+automation: !include automations.yaml

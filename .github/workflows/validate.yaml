@@ -1,0 +1,38 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"  # weekly, to catch breaking HA releases
+
+jobs:
+  yamllint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install yamllint
+      - run: yamllint --strict .
+
+  check-config:
+    name: check_config (HA ${{ matrix.version }})
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.version == 'beta' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [stable, beta]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble test config
+        run: |
+          mkdir -p ci-config/blueprints
+          cp -r test/config/. ci-config/
+          cp -r blueprints/. ci-config/blueprints/
+      - name: Run Home Assistant check_config
+        run: |
+          docker run --rm -v "$PWD/ci-config:/config" \
+            ghcr.io/home-assistant/home-assistant:${{ matrix.version }} \
+            python3 -m homeassistant --script check_config --config /config
