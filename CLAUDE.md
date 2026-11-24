@@ -55,5 +55,8 @@ reach his house, so keep `main` working.
 - Confirm on the first live run: date-only Google Task shows on the Nest
   Display; iOS `clear_notification` by tag works; Android Auto `car_ui` shows.
 - CarPlay only shows critical alerts (community reports, unverified).
+- 2026-11-24: `todo.google_tasks` once stopped matching service calls while
+  still showing a state (calls silently skip it). Integration reload fixed it.
+  Cause unknown; watch for a missing Google task.
 - task_sync with a single list: an unrelated item ticked off while no task is
   open sends a harmless extra `clear_notification`.
