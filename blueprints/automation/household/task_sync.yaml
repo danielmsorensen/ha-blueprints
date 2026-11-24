@@ -3,9 +3,8 @@ blueprint:
   description: >-
     The day before a calendar event (for example bin collection), adds one task
     naming all of tomorrow's events to one or more to-do lists (for example a
-    local list plus Google Tasks, which can show on a Nest Display) and
-    notifies the people at home. Anyone arriving home re-notifies everyone at
-    home. Tapping the button on any phone, or ticking the task off on any list,
+    local list plus Google Tasks) and notifies the people at home. Anyone
+    arriving home re-notifies everyone at home. Tapping the button on any phone, or ticking the task off on any list,
     completes it everywhere and clears every phone. Unfinished tasks expire on
     the event day.
 

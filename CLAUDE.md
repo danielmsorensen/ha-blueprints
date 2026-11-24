@@ -52,8 +52,11 @@ reach his house, so keep `main` working.
 
 ## Open items
 
-- Confirm on the first live run: date-only Google Task shows on the Nest
-  Display; iOS `clear_notification` by tag works; Android Auto `car_ui` shows.
+- Confirm on a live run: iOS `clear_notification` by tag works; Android Auto
+  `car_ui` shows.
+- Decided 2026-11-24: API-created Google Tasks don't show on the Nest display
+  (Tasks API is date-only; Nest seems to need a time). Accepted. Rejected
+  workaround: timed reminder via `google_assistant_sdk.send_text_command`.
 - CarPlay only shows critical alerts (community reports, unverified).
 - 2026-11-24: `todo.google_tasks` once stopped matching service calls while
   still showing a state (calls silently skip it). Integration reload fixed it.
