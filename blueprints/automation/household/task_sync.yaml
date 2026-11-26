@@ -3,9 +3,8 @@ blueprint:
   description: >-
     The day before a calendar event (for example bin collection), adds one task
     naming all of tomorrow's events to one or more to-do lists (for example a
-    local list plus Google Tasks, which can show on a Nest Display) and
-    notifies the people at home. Anyone arriving home re-notifies everyone at
-    home. Tapping the button on any phone, or ticking the task off on any list,
+    local list plus Google Tasks) and notifies the people at home. Anyone
+    arriving home re-notifies everyone at home. Tapping the button on any phone, or ticking the task off on any list,
     completes it everywhere and clears every phone. Unfinished tasks expire on
     the event day.
 
@@ -112,8 +111,9 @@ triggers:
   - trigger: time
     at: !input start_time
     id: create
-  - trigger: homeassistant
-    event: start
+  # "started", not "start": calendar.get_events may not exist yet at "start".
+  - trigger: event
+    event_type: homeassistant_started
     id: create_startup
   - trigger: time
     at: !input expire_time
@@ -160,23 +160,23 @@ variables:
   tomorrow: "{{ (now() + timedelta(days=1)).date() | string }}"
 
 actions:
-  # Open tasks carrying our marker, on every list.
+  # Tasks carrying our marker on every list, open and completed.
   - action: todo.get_items
     target:
       entity_id: "{{ todo_entities }}"
-    data:
-      status: needs_action
-    response_variable: open_lists
+    response_variable: all_lists
   - variables:
-      open_marked: >-
+      all_marked: >-
         {%- set ns = namespace(out=[]) -%}
-        {%- for ent, r in open_lists.items() -%}
+        {%- for ent, r in all_lists.items() -%}
           {%- for i in r['items'] if marker in (i.get('description') or '') -%}
             {%- set ns.out = ns.out + [{'list': ent, 'uid': i['uid'],
-                'summary': i['summary'], 'due': i.get('due') | string}] -%}
+                'summary': i['summary'], 'due': i.get('due') | string,
+                'status': i['status']}] -%}
           {%- endfor -%}
         {%- endfor -%}
         {{ ns.out }}
+      open_marked: "{{ all_marked | selectattr('status', 'eq', 'needs_action') | list }}"
 
   - choose:
       # ------------------------------------------------------------ create
@@ -188,9 +188,14 @@ actions:
           - condition: template
             value_template: >-
               {{ trigger.id == 'create' or now() >= today_at(start_time) }}
-          # Already created today (e.g. restart after start time).
+          # Already created today, open or completed (e.g. restart after
+          # start time, or after it was done).
           - condition: template
-            value_template: "{{ open_marked | selectattr('due', 'eq', today) | list | count == 0 }}"
+            value_template: "{{ all_marked | selectattr('due', 'eq', today) | list | count == 0 }}"
+          - condition: template
+            value_template: >-
+              {{ expand(calendars) | rejectattr('state', 'in', ['unavailable', 'unknown'])
+                 | list | count > 0 }}
           - action: calendar.get_events
             target:
               entity_id: !input calendars

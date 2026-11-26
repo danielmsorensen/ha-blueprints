@@ -46,8 +46,10 @@ Every day at the start time it checks the calendars for events **tomorrow**.
 If there are any, it:
 
 1. Adds one task naming them all (e.g. "Garden and Recycling") to each to-do
-   list, due today, such as a local HA list and Google Tasks (shows on a Nest
-   Display).
+   list, due today, such as a local HA list and Google Tasks.
+
+   Tasks made this way don't show on a Nest display: the Google Tasks API only
+   stores a date, and Nest seems to surface only tasks with a time.
 2. Notifies the people at home, with a button to mark it completed.
 
 Then until it's done:
@@ -91,7 +93,7 @@ still open, it's replaced rather than duplicated.
 
 Google Tasks is normally polled every 30 minutes. While a task may be open
 (start time the day before until expire time), the lists are refreshed every
-few minutes so ticking it off on the display clears phones quickly.
+few minutes so ticking it off in Google Tasks clears phones quickly.
 
 ### Updating
 
